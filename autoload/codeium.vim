@@ -84,6 +84,10 @@ function! s:CompletionInserter(current_completion, insert_text) abort
     let cursor_text = "\<C-O>:exe 'go' line2byte(line('.'))+col('.')+(" . delta . ")\<CR>"
   endif
   call codeium#server#Request('AcceptCompletion', {'metadata': codeium#server#RequestMetadata(), 'completion_id': current_completion.completion.completionId})
+  " call codeium#log#Error('delete_range: ' . delete_range)
+  " call codeium#log#Error('insert_text: ' . insert_text)
+  " call codeium#log#Error('cursor_text: ' . cursor_text)
+  " call codeium#log#Error('completion text: ' . current_completion.completion.text)
   return delete_range . insert_text . cursor_text
 endfunction
 
@@ -152,6 +156,7 @@ endfunction
 let s:nvim_extmark_ids = []
 
 function! s:ClearCompletion() abort
+  " call codeium#log#Error(strftime('%H:%M:%S') . ' codeium#ClearCompletion()')
   if has('nvim')
     let namespace = nvim_create_namespace('codeium')
     for id in s:nvim_extmark_ids
@@ -179,12 +184,15 @@ function! s:RenderCurrentCompletion() abort
     return ''
   endif
 
+  " call codeium#log#Error(strftime('%H:%M:%S') . ' codeium#RenderCurrentCompletion()')
+  " call codeium#log#Error('range: '.(json_encode(current_completion.range)))
   let parts = get(current_completion, 'completionParts', [])
 
   let idx = 0
   let inline_cumulative_cols = 0
   let diff = 0
   for part in parts
+      " call codeium#log#Error('PART type: ' . part.type . ' text: ' . part.text . ' offset: ' . part.offset . ' prefix: ' . get(part, 'prefix', '') . ' line: ' . get(part, 'line', 0))
     let row = get(part, 'line', 0) + 1
     if row != line('.')
       call codeium#log#Warn('Ignoring completion, line number is not the current line.')
@@ -198,7 +206,7 @@ function! s:RenderCurrentCompletion() abort
     endif
     let text = part.text
 
-    if (part.type ==# 'COMPLETION_PART_TYPE_INLINE' && idx == 0) || part.type ==# 'COMPLETION_PART_TYPE_INLINE_MASK'
+    if (part.type ==# 'COMPLETION_PART_TYPE_INLINE' && idx == 0) || (part.type ==# 'COMPLETION_PART_TYPE_INLINE_MASK' && !has('nvim-0.10'))
       let completion_prefix = get(part, 'prefix', '')
       let completion_line = completion_prefix . text
       let full_line = getline(row)
@@ -243,8 +251,25 @@ function! s:RenderCurrentCompletion() abort
       let priority = get(b:, 'codeium_virtual_text_priority',
                   \ get(g:, 'codeium_virtual_text_priority', 65535))
       let _virtcol = virtcol([row, _col+diff])
-      let data = {'id': idx + 1, 'hl_mode': 'combine', 'virt_text_win_col': _virtcol - 1, 'priority': priority }
-      if part.type ==# 'COMPLETION_PART_TYPE_INLINE_MASK'
+
+      " call codeium#log#Error('DIFF: ' . diff)
+      " call codeium#log#Error('inline_cumulative_cols: ' . inline_cumulative_cols)
+      let data = {'id': idx + 1, 'hl_mode': 'combine', 'priority': priority }
+      if has('nvim-0.10')
+        " TODO: include replaced text after cursor in the range for extmark (see end_col?)"
+        let data.virt_text_pos = 'inline'
+        " let extmark_col = _virtcol - 1
+        " let extmark_col = virtcol('.') - 1
+        " let extmark_col = getcurpos()[2] - 1
+        let extmark_col = inline_cumulative_cols + diff
+        let inline_type = 'COMPLETION_PART_TYPE_INLINE'
+      else
+        let data.virt_text_win_col = _virtcol - 1
+        let extmark_col = 0
+        let inline_type = 'COMPLETION_PART_TYPE_INLINE_MASK'
+      endif
+
+      if part.type ==# inline_type
         let data.virt_text = [[text, s:hlgroup]]
       elseif part.type ==# 'COMPLETION_PART_TYPE_BLOCK'
         let lines = split(text, "\n", 1)
@@ -252,12 +277,23 @@ function! s:RenderCurrentCompletion() abort
           call remove(lines, -1)
         endif
         let data.virt_lines = map(lines, { _, l -> [[l, s:hlgroup]] })
+        let extmark_col = 0
       else
         continue
       endif
 
+      " if extmark_col >= col('$')
+      "     call codeium#log#Error('!BOUNDS!')
+      "     let extmark_col = col('$') - 1
+      "     " call codeium#log#Error('!MARK: extmark_col is out of bounds: '..extmark_col)
+      "     continue
+      " endif
+
+      " echomsg 'type: '..part.type..' row: '..row..' col: '..extmark_col
+      " call codeium#log#Error('!MARK: row: '..row..' col: '..extmark_col..' text: >'..text..'<')
+
       call add(s:nvim_extmark_ids, data.id)
-      call nvim_buf_set_extmark(0, nvim_create_namespace('codeium'), row - 1, 0, data)
+      call nvim_buf_set_extmark(0, nvim_create_namespace('codeium'), row - 1, extmark_col, data)
     else
       if part.type ==# 'COMPLETION_PART_TYPE_INLINE'
         call prop_add(row, _col + diff, {'type': s:hlgroup, 'text': text})
@@ -287,6 +323,7 @@ function! s:RenderCurrentCompletion() abort
 endfunction
 
 function! codeium#Clear(...) abort
+    " call codeium#log#Error(strftime('%H:%M:%S').' codeium#Clear()')
   let b:_codeium_status = 0
   call codeium#RedrawStatusLine()
   if exists('g:_codeium_timer')
@@ -303,7 +340,7 @@ function! codeium#Clear(...) abort
         call codeium#log#Exception()
       endtry
     endif
-    call s:RenderCurrentCompletion()
+    " call s:RenderCurrentCompletion()
     unlet! b:_codeium_completions
 
   endif
@@ -402,6 +439,7 @@ function! codeium#Complete(...) abort
 endfunction
 
 function! codeium#DebouncedComplete(...) abort
+    " call codeium#log#Error(strftime('%H:%M:%S').' codeium#DebouncedComplete()')
   call codeium#Clear()
   if get(g:, 'codeium_manual', v:false)
     return
