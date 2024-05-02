@@ -5,10 +5,10 @@ let g:loaded_codeium_log = 1
 
 if !exists('s:logfile')
   let s:logfile = expand(get(g:, 'codeium_log_file', tempname() . '-codeium.log'))
-  " try
-  "   call writefile([], s:logfile)
-  " catch
-  " endtry
+  try
+    call writefile([], s:logfile)
+  catch
+  endtry
 endif
 
 function! codeium#log#Logfile() abort
